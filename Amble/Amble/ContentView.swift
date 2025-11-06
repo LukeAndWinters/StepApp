@@ -132,11 +132,42 @@ final class PedometerViewModel: ObservableObject {
 struct ContentView: View {
     var body: some View {
         TabView {
+            NavigationView { MovementComparisonView() }
+                .tabItem { Label("Movement", systemImage: "figure.walk.motion") }
             NavigationView { StepsView() }
-                .tabItem { Label("Steps", systemImage: "figure.walk.motion") }
+                .tabItem { Label("Steps", systemImage: "chart.bar") }
             NavigationView { AppsView() }
                 .tabItem { Label("Apps", systemImage: "app.badge") }
         }
+    }
+}
+
+struct MovementComparisonView: View {
+    @State private var selectedView = 0
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // View selector
+            Picker("View Style", selection: $selectedView) {
+                Text("Minimal").tag(0)
+                Text("Visual").tag(1)
+                Text("Detailed").tag(2)
+            }
+            .pickerStyle(.segmented)
+            .padding()
+            
+            // Display selected view
+            TabView(selection: $selectedView) {
+                MovementView1_Minimal()
+                    .tag(0)
+                MovementView2_Visual()
+                    .tag(1)
+                MovementView3_Detailed()
+                    .tag(2)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+        }
+        .navigationTitle("Movement Detection")
     }
 }
 
