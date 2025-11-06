@@ -130,6 +130,17 @@ final class PedometerViewModel: ObservableObject {
 }
 
 struct ContentView: View {
+    var body: some View {
+        TabView {
+            NavigationView { StepsView() }
+                .tabItem { Label("Steps", systemImage: "figure.walk.motion") }
+            NavigationView { AppsView() }
+                .tabItem { Label("Apps", systemImage: "app.badge") }
+        }
+    }
+}
+
+struct StepsView: View {
     @StateObject private var viewModel = PedometerViewModel()
 
     var body: some View {
@@ -170,6 +181,7 @@ struct ContentView: View {
         .padding()
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
+        .navigationTitle("Steps")
     }
 }
 
