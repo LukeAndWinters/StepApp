@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>processing</string>
+	</array>
+	<key>NSMotionUsageDescription</key>
+	<string>Amble uses motion data to detect when you're walking, running, or stationary to control app blocking.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Amble needs location access to keep running in the background and detect your movement to automatically block or unblock apps.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Amble uses location to help detect your movement and control app blocking.</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.amble.movement-check</string>
+	</array>
+</dict>
+</plist>

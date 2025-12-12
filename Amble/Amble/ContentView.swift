@@ -132,87 +132,11 @@ final class PedometerViewModel: ObservableObject {
 struct ContentView: View {
     var body: some View {
         TabView {
-            NavigationView { MovementComparisonView() }
+            NavigationView { MovementView() }
                 .tabItem { Label("Movement", systemImage: "figure.walk.motion") }
-            NavigationView { StepsView() }
-                .tabItem { Label("Steps", systemImage: "chart.bar") }
             NavigationView { AppsView() }
                 .tabItem { Label("Apps", systemImage: "app.badge") }
         }
-    }
-}
-
-struct MovementComparisonView: View {
-    @State private var selectedView = 0
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // View selector
-            Picker("View Style", selection: $selectedView) {
-                Text("Minimal").tag(0)
-                Text("Visual").tag(1)
-                Text("Detailed").tag(2)
-            }
-            .pickerStyle(.segmented)
-            .padding()
-            
-            // Display selected view
-            TabView(selection: $selectedView) {
-                MovementView1_Minimal()
-                    .tag(0)
-                MovementView2_Visual()
-                    .tag(1)
-                MovementView3_Detailed()
-                    .tag(2)
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-        }
-        .navigationTitle("Movement Detection")
-    }
-}
-
-struct StepsView: View {
-    @StateObject private var viewModel = PedometerViewModel()
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Steps in last minute")
-                .font(.headline)
-
-            Text("\(viewModel.stepsLastMinute)")
-                .font(.system(size: 56, weight: .bold, design: .rounded))
-                .monospacedDigit()
-
-            HStack(spacing: 8) {
-                Image(systemName: "figure.walk")
-                Text(viewModel.activityDescription)
-                    .foregroundStyle(.secondary)
-            }
-
-            if !viewModel.isAuthorizedForMotion {
-                Text("Motion access is not authorized. Enable Motion & Fitness in Settings → Privacy.")
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 8)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Inactivity window: \(viewModel.windowSeconds) seconds")
-                    .font(.subheadline)
-                Slider(value: Binding(
-                    get: { Double(viewModel.windowSeconds) },
-                    set: {
-                        let clamped = min(max($0, 5), 600)
-                        viewModel.windowSeconds = Int(clamped)
-                    }
-                ), in: 5...600, step: 5)
-            }
-        }
-        .padding()
-        .onAppear { viewModel.start() }
-        .onDisappear { viewModel.stop() }
-        .navigationTitle("Steps")
     }
 }
 
