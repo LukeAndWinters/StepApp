@@ -3,7 +3,7 @@ import Combine
 import FamilyControls
 import CoreLocation
 
-struct AppsView: View {
+struct SettingsView: View {
     @EnvironmentObject private var screenTimeManager: ScreenTimeManager
     @EnvironmentObject private var detector: MovementDetector
     @State private var showScreenTimePicker = false
@@ -144,7 +144,7 @@ struct AppsView: View {
                 Text("How It Works")
             }
         }
-        .navigationTitle("Apps")
+        .navigationTitle("Settings")
     }
     
     private var blockingStatusDescription: String {
@@ -217,7 +217,7 @@ struct AppsView: View {
 }
 
 #Preview {
-    NavigationView { AppsView() }
+    NavigationView { SettingsView() }
         .environmentObject(ScreenTimeManager.shared)
         .environmentObject(MovementDetector.shared)
 }

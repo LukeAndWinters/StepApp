@@ -134,8 +134,8 @@ struct ContentView: View {
         TabView {
             NavigationView { MovementView() }
                 .tabItem { Label("Movement", systemImage: "figure.walk.motion") }
-            NavigationView { AppsView() }
-                .tabItem { Label("Apps", systemImage: "app.badge") }
+            NavigationView { SettingsView() }
+                .tabItem { Label("Settings", systemImage: "gearshape") }
         }
     }
 }
