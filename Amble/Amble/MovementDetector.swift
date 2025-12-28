@@ -9,6 +9,7 @@ import Foundation
 import CoreMotion
 import CoreLocation
 import Combine
+import UserNotifications
 
 enum MovementState {
     case stationary
@@ -18,14 +19,78 @@ enum MovementState {
     case unknown
 }
 
+/// Location monitoring level - trades off battery usage vs responsiveness
+enum LocationMonitoringLevel: Int, CaseIterable, Identifiable {
+    case significantChangesOnly = 0  // Most battery efficient
+    case lowPower = 1                // Periodic checks every 60s
+    case balanced = 2                // Periodic checks every 30s
+    case responsive = 3              // Periodic checks every 15s
+    case continuous = 4              // Always on (most battery drain)
+    
+    var id: Int { rawValue }
+    
+    var title: String {
+        switch self {
+        case .significantChangesOnly: return "Minimal"
+        case .lowPower: return "Low Power"
+        case .balanced: return "Balanced"
+        case .responsive: return "Responsive"
+        case .continuous: return "Continuous"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .significantChangesOnly: return "Only checks when you move ~500m"
+        case .lowPower: return "Checks every 60 seconds"
+        case .balanced: return "Checks every 30 seconds"
+        case .responsive: return "Checks every 15 seconds"
+        case .continuous: return "Always monitoring (uses more battery)"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .significantChangesOnly: return "leaf"
+        case .lowPower: return "battery.75percent"
+        case .balanced: return "battery.50percent"
+        case .responsive: return "battery.25percent"
+        case .continuous: return "bolt.fill"
+        }
+    }
+    
+    var checkInterval: TimeInterval {
+        switch self {
+        case .significantChangesOnly: return 0 // No periodic checks
+        case .lowPower: return 60
+        case .balanced: return 30
+        case .responsive: return 15
+        case .continuous: return 0 // Always on
+        }
+    }
+    
+    var usesContinuousLocation: Bool {
+        self == .continuous
+    }
+    
+    var usesSignificantChanges: Bool {
+        self == .significantChangesOnly
+    }
+}
+
 @MainActor
 final class MovementDetector: NSObject, ObservableObject {
     static let shared = MovementDetector()
+    
+    private static let monitoringLevelKey = "locationMonitoringLevel"
+    private static let notifyOnStationaryKey = "notifyOnStationary"
+    private static let notifyOnMovingKey = "notifyOnMoving"
     
     @Published var isMoving: Bool = false {
         didSet {
             if oldValue != isMoving {
                 onMovementStateChanged?(isMoving)
+                sendMovementNotificationIfNeeded(isMoving: isMoving)
             }
         }
     }
@@ -36,6 +101,37 @@ final class MovementDetector: NSObject, ObservableObject {
     @Published var isRunning: Bool = false
     @Published var locationAuthorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var isInBackground: Bool = false
+    @Published var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
+    
+    /// Current location monitoring level
+    @Published var monitoringLevel: LocationMonitoringLevel {
+        didSet {
+            UserDefaults.standard.set(monitoringLevel.rawValue, forKey: Self.monitoringLevelKey)
+            if isInBackground {
+                applyMonitoringLevel()
+            }
+        }
+    }
+    
+    /// Whether to notify when becoming stationary
+    @Published var notifyOnStationary: Bool {
+        didSet {
+            UserDefaults.standard.set(notifyOnStationary, forKey: Self.notifyOnStationaryKey)
+            if notifyOnStationary {
+                requestNotificationPermission()
+            }
+        }
+    }
+    
+    /// Whether to notify when starting to move
+    @Published var notifyOnMoving: Bool {
+        didSet {
+            UserDefaults.standard.set(notifyOnMoving, forKey: Self.notifyOnMovingKey)
+            if notifyOnMoving {
+                requestNotificationPermission()
+            }
+        }
+    }
     
     /// Whether recent steps were detected (within the grace period)
     @Published var hasRecentSteps: Bool = false
@@ -50,21 +146,89 @@ final class MovementDetector: NSObject, ObservableObject {
     private var stepsTimer: Timer?
     private var recentStepsTimer: Timer?
     private var backgroundWakeTimer: Timer?
+    private var lastNotificationDate: Date?
+    private let notificationCooldown: TimeInterval = 10.0 // Minimum seconds between notifications
     
     // Thresholds
     private let accelerationThreshold: Double = 0.1 // g-force threshold for movement
     private let vehicleSpeedThreshold: Double = 5.0 // m/s (~18 km/h) - likely in vehicle
     private let updateInterval: TimeInterval = 0.1 // 10 Hz
     private let stepsGracePeriod: TimeInterval = 10.0 // Seconds to consider recent steps
-    private let backgroundCheckInterval: TimeInterval = 30.0 // Check every 30 seconds in background
     
     private var accelerationHistory: [Double] = []
     private let historySize = 10 // Keep last 10 readings
     private var lastStepCount: Int = 0
     
     override init() {
+        // Load saved settings
+        let savedLevel = UserDefaults.standard.integer(forKey: Self.monitoringLevelKey)
+        self.monitoringLevel = LocationMonitoringLevel(rawValue: savedLevel) ?? .balanced
+        self.notifyOnStationary = UserDefaults.standard.bool(forKey: Self.notifyOnStationaryKey)
+        self.notifyOnMoving = UserDefaults.standard.bool(forKey: Self.notifyOnMovingKey)
+        
         super.init()
         setupLocationManager()
+        checkNotificationAuthorizationStatus()
+    }
+    
+    // MARK: - Notifications
+    
+    func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, error in
+            DispatchQueue.main.async {
+                self?.checkNotificationAuthorizationStatus()
+                if let error = error {
+                    print("Notification permission error: \(error)")
+                }
+            }
+        }
+    }
+    
+    private func checkNotificationAuthorizationStatus() {
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+            DispatchQueue.main.async {
+                self?.notificationAuthorizationStatus = settings.authorizationStatus
+            }
+        }
+    }
+    
+    private func sendMovementNotificationIfNeeded(isMoving: Bool) {
+        // Check if notifications are enabled for this state
+        guard (isMoving && notifyOnMoving) || (!isMoving && notifyOnStationary) else {
+            return
+        }
+        
+        // Cooldown to prevent notification spam
+        if let lastDate = lastNotificationDate,
+           Date().timeIntervalSince(lastDate) < notificationCooldown {
+            return
+        }
+        
+        lastNotificationDate = Date()
+        
+        let content = UNMutableNotificationContent()
+        
+        if isMoving {
+            content.title = "You're Moving! 🚶"
+            content.body = "Apps are now unlocked. Keep moving!"
+        } else {
+            content.title = "You've Stopped 🛑"
+            content.body = "Apps are now blocked. Start moving to unlock them."
+        }
+        
+        // No sound by default (silent notification)
+        // Use a fixed identifier so new notifications replace the previous one
+        let request = UNNotificationRequest(
+            identifier: "amble-movement-status",
+            content: content,
+            trigger: nil // Deliver immediately
+        )
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("Failed to send notification: \(error)")
+            }
+        }
     }
     
     private func setupLocationManager() {
@@ -159,20 +323,9 @@ final class MovementDetector: NSObject, ObservableObject {
     /// Call when app enters background
     func enterBackground() {
         isInBackground = true
-        print("Entering background mode...")
+        print("Entering background mode with level: \(monitoringLevel.title)")
         
-        // Stop continuous location updates (battery drain)
-        locationManager.stopUpdatingLocation()
-        
-        // Start significant location changes (very battery efficient)
-        // This wakes the app when user moves ~500m between cell towers
-        if locationManager.authorizationStatus == .authorizedAlways {
-            locationManager.startMonitoringSignificantLocationChanges()
-            print("Started significant location monitoring")
-        }
-        
-        // Start a background wake timer that briefly enables location to keep CoreMotion alive
-        startBackgroundWakeTimer()
+        applyMonitoringLevel()
     }
     
     /// Call when app enters foreground
@@ -180,8 +333,9 @@ final class MovementDetector: NSObject, ObservableObject {
         isInBackground = false
         print("Entering foreground mode...")
         
-        // Stop significant location monitoring
+        // Stop all background monitoring
         locationManager.stopMonitoringSignificantLocationChanges()
+        locationManager.stopUpdatingLocation()
         backgroundWakeTimer?.invalidate()
         backgroundWakeTimer = nil
         
@@ -189,10 +343,54 @@ final class MovementDetector: NSObject, ObservableObject {
         queryRecentActivity()
     }
     
+    /// Apply the current monitoring level settings
+    private func applyMonitoringLevel() {
+        guard isInBackground else { return }
+        guard locationManager.authorizationStatus == .authorizedAlways ||
+              locationManager.authorizationStatus == .authorizedWhenInUse else {
+            print("Location not authorized, cannot apply monitoring level")
+            return
+        }
+        
+        // Stop any existing monitoring
+        locationManager.stopUpdatingLocation()
+        locationManager.stopMonitoringSignificantLocationChanges()
+        backgroundWakeTimer?.invalidate()
+        backgroundWakeTimer = nil
+        
+        print("Applying monitoring level: \(monitoringLevel.title)")
+        
+        switch monitoringLevel {
+        case .significantChangesOnly:
+            // Only use significant location changes - most battery efficient
+            if locationManager.authorizationStatus == .authorizedAlways {
+                locationManager.startMonitoringSignificantLocationChanges()
+                print("Using significant location changes only")
+            }
+            
+        case .continuous:
+            // Keep location always on - most responsive but drains battery
+            locationManager.startUpdatingLocation()
+            print("Using continuous location updates")
+            
+        case .lowPower, .balanced, .responsive:
+            // Use periodic timer + significant changes
+            if locationManager.authorizationStatus == .authorizedAlways {
+                locationManager.startMonitoringSignificantLocationChanges()
+            }
+            startBackgroundWakeTimer()
+            print("Using periodic checks every \(monitoringLevel.checkInterval)s + significant changes")
+        }
+    }
+    
     /// Periodic timer to briefly wake location services and allow CoreMotion to update
     private func startBackgroundWakeTimer() {
         backgroundWakeTimer?.invalidate()
-        backgroundWakeTimer = Timer.scheduledTimer(withTimeInterval: backgroundCheckInterval, repeats: true) { [weak self] _ in
+        
+        let interval = monitoringLevel.checkInterval
+        guard interval > 0 else { return }
+        
+        backgroundWakeTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.performBackgroundCheck()
         }
     }
